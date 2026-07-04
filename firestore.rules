@@ -1,0 +1,62 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Catch-all Master Gate (Default-Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Hardened helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // User Validator
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt'])
+        && data.uid == request.auth.uid
+        && data.uid is string
+        && data.email is string
+        && data.email.size() <= 256
+        && data.createdAt is string
+        && (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 128));
+    }
+
+    // DayProgress Validator
+    function isValidDayProgress(data) {
+      return data.keys().hasAll(['dayNum', 'attendanceChecked', 'dataStructuresStudyDone', 'dataStructuresPracticeDone', 'mathsStudyDone', 'mathsPracticeDone', 'updatedAt'])
+        && data.dayNum is number
+        && data.dayNum >= 1
+        && data.dayNum <= 19
+        && data.attendanceChecked is bool
+        && data.dataStructuresStudyDone is list
+        && data.dataStructuresPracticeDone is bool
+        && data.mathsStudyDone is list
+        && data.mathsPracticeDone is bool
+        && data.updatedAt is string
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 5000));
+    }
+
+    // Rule matches
+    match /users/{userId} {
+      allow read: if isSignedIn() && isOwner(userId);
+      allow create, update: if isSignedIn() && isOwner(userId) && isValidUser(request.resource.data);
+      allow delete: if false; // Users cannot be deleted from the client
+    }
+
+    match /users/{userId}/progress/{dayId} {
+      allow read: if isSignedIn() && isOwner(userId);
+      allow create, update: if isSignedIn() && isOwner(userId) && isValidId(dayId) && isValidDayProgress(request.resource.data);
+      allow delete: if isSignedIn() && isOwner(userId) && isValidId(dayId);
+    }
+  }
+}
